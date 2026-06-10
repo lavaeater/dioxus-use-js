@@ -1475,6 +1475,14 @@ fn generate_invocation(
     };
     let asset_path_string = asset_path.value();
     // Note: eval will fail if returning undefined. undefined happens if there is no return type
+    //
+    // The module specifier is resolved against `document.baseURI` before `import()`.
+    // Dioxus runs every `eval` inside `new AsyncFunction("dioxus", script)`, and in
+    // the Android System WebView (Chromium) the base URL of Function-constructed code
+    // is `about:blank`, so a root-relative specifier like `/assets/foo.js` fails with
+    // "Failed to resolve module specifier … base URL is about:blank because import() is
+    // called from a CORS-cross-origin script". Resolving against the document's real
+    // origin first sidesteps that; on Web/Desktop it's a harmless no-op.
     let js = if is_class_method {
         format!(
             "{prepare}{drop_declare}{param_declarations}{drop_handle}try{{{call_function}}}catch(e){{console.warn(\"Executing `{func_call_full_path}` threw:\", e);return [false,null];}}{finally}"
@@ -1482,12 +1490,12 @@ fn generate_invocation(
     } else if let Some(class) = &class {
         let class_name = &class.class_name;
         format!(
-            "const{{{class_name}}}=await import(\"{asset_path_string}\");{prepare}{drop_declare}{param_declarations}{drop_handle}try{{{call_function}}}catch(e){{console.warn(\"Executing `{func_call_full_path}` threw:\", e);return [false,null];}}{finally}"
+            "const{{{class_name}}}=await import(new URL(\"{asset_path_string}\",document.baseURI).href);{prepare}{drop_declare}{param_declarations}{drop_handle}try{{{call_function}}}catch(e){{console.warn(\"Executing `{func_call_full_path}` threw:\", e);return [false,null];}}{finally}"
         )
     } else {
         assert_eq!(func_call_full_path.as_str(), func_name_str);
         format!(
-            "const{{{func_name_str}}}=await import(\"{asset_path_string}\");{prepare}{drop_declare}{param_declarations}{drop_handle}try{{{call_function}}}catch(e){{console.warn(\"Executing `{func_call_full_path}` threw:\", e);return [false,null];}}{finally}"
+            "const{{{func_name_str}}}=await import(new URL(\"{asset_path_string}\",document.baseURI).href);{prepare}{drop_declare}{param_declarations}{drop_handle}try{{{call_function}}}catch(e){{console.warn(\"Executing `{func_call_full_path}` threw:\", e);return [false,null];}}{finally}"
         )
     };
     fn to_raw_string_literal(s: &str) -> Literal {
