@@ -1,8 +1,8 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![doc = include_str!("../README.md")]
 
-use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
+use std::rc::Rc;
 use std::task::{Context, Poll};
 use std::{error::Error, fmt::Display, sync::Arc};
 
@@ -11,7 +11,7 @@ mod build;
 #[cfg(feature = "build")]
 pub use build::*;
 
-use dioxus::document::{self, Eval};
+use dioxus::document::Eval;
 pub use dioxus_use_js_macro::use_js;
 
 // We export these so downstreams don't need `serde` or `serde_json` directly
@@ -114,15 +114,11 @@ impl std::error::Error for JsError {}
 ///
 /// This uses `Arc` internally and the value on the js side is destroyed when the last reference is dropped
 // Dev Note: No `serde::Serialize` or `serde::Deserialize` on purpose since the value is destroyed when dropped
-#[derive(
-    serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Hash,
-)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct JsValue(Arc<JsValueInner>);
 
 /// Abstraction used to implement the one time drop
-#[derive(
-    serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Hash,
-)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 struct JsValueInner(String);
 
 impl JsValue {
@@ -165,7 +161,7 @@ impl Drop for JsValueInner {
 }
 
 /// Signals the drop of a component.
-/// 
+///
 /// Dev Note: When a normal Eval drops. It does not signal to the channel that it has been dropped.
 /// Thus any `await dioxus.recv()` will be awaiting forever, on web we could send one last signal
 /// to notify of this (i.e. only use one `await dioxus.recv()` in a seperate async closure
@@ -187,8 +183,9 @@ impl Drop for SignalDrop {
         let invocation_id = std::mem::take(&mut self.0);
         dioxus::core::spawn_forever(async move {
             // Note the extra `d` for drop
-            let eval =
-                dioxus::document::eval(&format!("let i=\"{invocation_id}d\";let p=window[i];delete window[i];p();dioxus.close();return null;"));
+            let eval = dioxus::document::eval(&format!(
+                "let i=\"{invocation_id}d\";let p=window[i];delete window[i];p();dioxus.close();return null;"
+            ));
             if let Err(error) = eval.await {
                 dioxus::logger::tracing::error!(
                     "Failed to notify of drop for invocation `window[\"{invocation_id}d\"]`. Error: {error}"
@@ -205,14 +202,14 @@ impl Drop for SignalDrop {
 /// Used in generated code.
 #[doc(hidden)]
 #[derive(Clone)]
-pub struct CallbackResponder(Arc<CallbackResponderInner>);
+pub struct CallbackResponder(Rc<CallbackResponderInner>);
 
 struct CallbackResponderInner(Eval);
 
 impl CallbackResponder {
     pub fn new(invocation_id: &str) -> Self {
         // r = [id, ok, data], i = id, o = ok, d = data, f = window[function_id], x = f[id] = [resolve, reject]
-        CallbackResponder(Arc::new(CallbackResponderInner(dioxus::document::eval(
+        CallbackResponder(Rc::new(CallbackResponderInner(dioxus::document::eval(
             &format!(
                 "while(true){{let r=await dioxus.recv();if(!Array.isArray(r))break;let f=window[\"{invocation_id}\"];if(f==null)break;let i=r[0],o=r[1],d=r[2],x=f[i];delete f[i];if(o)x[0](d);else x[1](d);}}",
             ),

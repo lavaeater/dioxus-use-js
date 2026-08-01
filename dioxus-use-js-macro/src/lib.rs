@@ -8,6 +8,7 @@ use proc_macro2::{Literal, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::fmt;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::{fs, path::Path};
@@ -235,12 +236,12 @@ enum RustType {
     JsValue(JsValue),
 }
 
-impl ToString for RustType {
-    fn to_string(&self) -> String {
+impl fmt::Display for RustType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            RustType::Regular(ty) => ty.clone(),
-            RustType::Callback(callback) => callback.to_string(),
-            RustType::JsValue(js_value) => js_value.to_string(),
+            RustType::Regular(ty) => f.write_str(ty),
+            RustType::Callback(callback) => callback.fmt(f),
+            RustType::JsValue(js_value) => js_value.fmt(f),
         }
     }
 }
@@ -259,14 +260,13 @@ struct RustCallback {
     output: Option<String>,
 }
 
-impl ToString for RustCallback {
-    fn to_string(&self) -> String {
-        let input = self.input.as_deref();
+impl fmt::Display for RustCallback {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let input = self.input.as_deref().unwrap_or("()");
         let output = self.output.as_deref().unwrap_or(UNIT);
-        format!(
-            "dioxus::core::Callback<{}, impl Future<Output = Result<{}, dioxus_use_js::SerdeJsonValue>> + 'static>",
-            input.unwrap_or("()"),
-            output
+        write!(
+            f,
+            "dioxus::core::Callback<{input}, impl Future<Output = Result<{output}, dioxus_use_js::SerdeJsonValue>> + 'static>"
         )
     }
 }
@@ -277,32 +277,26 @@ struct JsValue {
     is_input: bool,
 }
 
-impl ToString for JsValue {
-    fn to_string(&self) -> String {
-        if self.is_option {
-            format!(
-                "Option<{}>",
-                if self.is_input {
-                    format!("&{}", JSVALUE)
-                } else {
-                    JSVALUE.to_owned()
-                }
-            )
+impl fmt::Display for JsValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let inner = if self.is_input {
+            format!("&{JSVALUE}")
         } else {
-            if self.is_input {
-                format!("&{}", JSVALUE)
-            } else {
-                JSVALUE.to_owned()
-            }
+            JSVALUE.to_owned()
+        };
+        if self.is_option {
+            write!(f, "Option<{inner}>")
+        } else {
+            f.write_str(&inner)
         }
     }
 }
 
 fn strip_parenthesis(mut ts_type: &str) -> &str {
     while ts_type.starts_with("(") && ts_type.ends_with(")") {
-        ts_type = &ts_type[1..ts_type.len() - 1].trim();
+        ts_type = ts_type[1..ts_type.len() - 1].trim();
     }
-    return ts_type;
+    ts_type
 }
 
 /// Splits into correct comma delimited arguments
@@ -348,12 +342,12 @@ fn ts_type_to_rust_type(ts_type: Option<&str>, is_input: bool) -> RustType {
             .to_owned(),
         );
     };
-    ts_type = strip_parenthesis(&mut ts_type);
+    ts_type = strip_parenthesis(ts_type);
     if ts_type.starts_with("Promise<") && ts_type.ends_with(">") {
         assert!(!is_input, "Promise cannot be used as input type");
         ts_type = &ts_type[8..ts_type.len() - 1];
     }
-    ts_type = strip_parenthesis(&mut ts_type);
+    ts_type = strip_parenthesis(ts_type);
     if ts_type.contains(JSVALUE_START) {
         let parts = split_top_level_union(ts_type);
         let len = parts.len();
@@ -418,7 +412,7 @@ fn ts_type_to_rust_type(ts_type: Option<&str>, is_input: bool) -> RustType {
     }
     RustType::Regular(match ts_type_to_rust_type_helper(ts_type, is_input) {
         Some(value) => {
-            if value.contains(UNIT) && (is_input || &value != UNIT) {
+            if value.contains(UNIT) && (is_input || value != UNIT) {
                 // Would cause serialization errors since `serde_json::Value::Null` or any, cannot be deserialized into `()`.
                 // We handle `()` special case to account for this if this is the root type in the output. But not input or output nested.
                 panic!("`{}` is not valid in this position", ts_type);
@@ -437,7 +431,7 @@ fn ts_type_to_rust_type(ts_type: Option<&str>, is_input: bool) -> RustType {
 /// Returns None if could not determine type
 fn ts_type_to_rust_type_helper(mut ts_type: &str, can_be_ref: bool) -> Option<String> {
     ts_type = ts_type.trim();
-    ts_type = strip_parenthesis(&mut ts_type);
+    ts_type = strip_parenthesis(ts_type);
 
     let parts = split_top_level_union(ts_type);
     if parts.len() > 1 {
@@ -521,7 +515,8 @@ fn ts_type_to_rust_type_helper(mut ts_type: &str, can_be_ref: bool) -> Option<St
     }
 
     // Base types
-    let rust_type = match ts_type {
+
+    match ts_type {
         "string" => {
             if can_be_ref {
                 Some("&str".to_owned())
@@ -546,9 +541,7 @@ fn ts_type_to_rust_type_helper(mut ts_type: &str, can_be_ref: bool) -> Option<St
         }
         // "any" | "unknown" | "object" | .. etc.
         _ => None,
-    };
-
-    rust_type
+    }
 }
 
 /// Splits e.g. `number | null | string` ignoring nesting like `(number | null)[]`
@@ -587,7 +580,7 @@ fn split_top_level_union(s: &str) -> Vec<&str> {
     parts
 }
 
-fn type_to_string(ty: &Box<TsType>, source_map: &SourceMap) -> String {
+fn type_to_string(ty: &TsType, source_map: &SourceMap) -> String {
     let span = ty.span();
     source_map
         .span_to_snippet(span)
@@ -631,7 +624,7 @@ fn function_info_helper<'a, I>(
     name: String,
     span: &swc_common::Span,
     params: I,
-    return_type: Option<&Box<TsTypeAnn>>,
+    return_type: Option<&TsTypeAnn>,
     is_async: bool,
     is_exported: bool,
 ) -> FunctionInfo
@@ -642,10 +635,8 @@ where
 
     let params = function_pat_to_param_info(params, &visitor.source_map);
 
-    let js_return_type = return_type.as_ref().map(|type_ann| {
-        let ty = &type_ann.type_ann;
-        type_to_string(ty, &visitor.source_map)
-    });
+    let js_return_type =
+        return_type.map(|type_ann| type_to_string(&type_ann.type_ann, &visitor.source_map));
     if !is_async
         && let Some(ref js_return_type) = js_return_type
         && js_return_type.starts_with("Promise")
@@ -684,7 +675,7 @@ impl Visit for JsVisitor {
             name,
             &node.span(),
             node.function.params.iter().map(|e| &e.pat),
-            node.function.return_type.as_ref(),
+            node.function.return_type.as_deref(),
             node.function.is_async,
             false,
         ));
@@ -693,35 +684,35 @@ impl Visit for JsVisitor {
 
     /// Visit function expressions: const foo = function() {}
     fn visit_var_declarator(&mut self, node: &VarDeclarator) {
-        if let swc_ecma_ast::Pat::Ident(ident) = &node.name {
-            if let Some(init) = &node.init {
-                let span = node.span();
-                let name = ident.id.sym.to_string();
-                match &**init {
-                    swc_ecma_ast::Expr::Fn(fn_expr) => {
-                        self.functions.push(function_info_helper(
-                            &self,
-                            name,
-                            &span,
-                            fn_expr.function.params.iter().map(|e| &e.pat),
-                            fn_expr.function.return_type.as_ref(),
-                            fn_expr.function.is_async,
-                            false,
-                        ));
-                    }
-                    swc_ecma_ast::Expr::Arrow(arrow_fn) => {
-                        self.functions.push(function_info_helper(
-                            &self,
-                            name,
-                            &span,
-                            arrow_fn.params.iter(),
-                            arrow_fn.return_type.as_ref(),
-                            arrow_fn.is_async,
-                            false,
-                        ));
-                    }
-                    _ => {}
+        if let swc_ecma_ast::Pat::Ident(ident) = &node.name
+            && let Some(init) = &node.init
+        {
+            let span = node.span();
+            let name = ident.id.sym.to_string();
+            match &**init {
+                swc_ecma_ast::Expr::Fn(fn_expr) => {
+                    self.functions.push(function_info_helper(
+                        self,
+                        name,
+                        &span,
+                        fn_expr.function.params.iter().map(|e| &e.pat),
+                        fn_expr.function.return_type.as_deref(),
+                        fn_expr.function.is_async,
+                        false,
+                    ));
                 }
+                swc_ecma_ast::Expr::Arrow(arrow_fn) => {
+                    self.functions.push(function_info_helper(
+                        self,
+                        name,
+                        &span,
+                        arrow_fn.params.iter(),
+                        arrow_fn.return_type.as_deref(),
+                        arrow_fn.is_async,
+                        false,
+                    ));
+                }
+                _ => {}
             }
         }
         node.visit_children_with(self);
@@ -734,11 +725,11 @@ impl Visit for JsVisitor {
                 let span = node.span();
                 let name = fn_decl.ident.sym.to_string();
                 self.functions.push(function_info_helper(
-                    &self,
+                    self,
                     name,
                     &span,
                     fn_decl.function.params.iter().map(|e| &e.pat),
-                    fn_decl.function.return_type.as_ref(),
+                    fn_decl.function.return_type.as_deref(),
                     fn_decl.function.is_async,
                     true,
                 ));
@@ -750,62 +741,58 @@ impl Visit for JsVisitor {
                 let mut methods = Vec::new();
 
                 for member in &class_decl.class.body {
-                    match member {
-                        ClassMember::Method(method) => {
-                            let method_name = match &method.key {
-                                PropName::Ident(ident) => ident.sym.to_string(),
-                                PropName::Str(str_lit) => str_lit.value.to_string(),
-                                _ => continue,
-                            };
+                    if let ClassMember::Method(method) = member {
+                        let method_name = match &method.key {
+                            PropName::Ident(ident) => ident.sym.to_string(),
+                            PropName::Str(str_lit) => str_lit.value.to_string(),
+                            _ => continue,
+                        };
 
-                            let method_span = method.span();
-                            let method_doc = self.extract_doc_comment(&method_span);
+                        let method_span = method.span();
+                        let method_doc = self.extract_doc_comment(&method_span);
 
-                            let params = function_pat_to_param_info(
-                                method.function.params.iter().map(|p| &p.pat),
-                                &self.source_map,
+                        let params = function_pat_to_param_info(
+                            method.function.params.iter().map(|p| &p.pat),
+                            &self.source_map,
+                        );
+
+                        let js_return_type = method.function.return_type.as_ref().map(|type_ann| {
+                            let ty = &type_ann.type_ann;
+                            type_to_string(ty, &self.source_map)
+                        });
+
+                        let is_async = method.function.is_async;
+                        if !is_async
+                            && js_return_type
+                                .as_ref()
+                                .is_some_and(|js_return_type: &String| {
+                                    js_return_type.starts_with("Promise")
+                                })
+                        {
+                            panic!(
+                                "Method `{}` in exported class `{}` returns a Promise but is not marked as async",
+                                method_name, name
                             );
-
-                            let js_return_type =
-                                method.function.return_type.as_ref().map(|type_ann| {
-                                    let ty = &type_ann.type_ann;
-                                    type_to_string(ty, &self.source_map)
-                                });
-
-                            let is_async = method.function.is_async;
-                            if !is_async
-                                && js_return_type
-                                    .as_ref()
-                                    .is_some_and(|js_return_type: &String| {
-                                        js_return_type.starts_with("Promise")
-                                    })
-                            {
-                                panic!(
-                                    "Method `{}` in exported class `{}` returns a Promise but is not marked as async",
-                                    method_name, name
-                                );
-                            }
-
-                            let rust_return_type =
-                                ts_type_to_rust_type(js_return_type.as_deref(), false);
-
-                            let pos = self.source_map.lookup_char_pos(method_span.lo);
-                            let line = pos.line - 1;
-                            let column = pos.col.0;
-
-                            methods.push(MethodInfo {
-                                name: method_name,
-                                params,
-                                js_return_type,
-                                rust_return_type,
-                                is_async,
-                                is_static: method.is_static,
-                                doc_comment: method_doc,
-                                line,
-                                column,
-                            });
                         }
-                        _ => {}
+
+                        let rust_return_type =
+                            ts_type_to_rust_type(js_return_type.as_deref(), false);
+
+                        let pos = self.source_map.lookup_char_pos(method_span.lo);
+                        let line = pos.line - 1;
+                        let column = pos.col.0;
+
+                        methods.push(MethodInfo {
+                            name: method_name,
+                            params,
+                            js_return_type,
+                            rust_return_type,
+                            is_async,
+                            is_static: method.is_static,
+                            doc_comment: method_doc,
+                            line,
+                            column,
+                        });
                     }
                 }
 
@@ -865,60 +852,57 @@ impl Visit for JsVisitor {
         let mut methods = Vec::new();
 
         for member in &node.class.body {
-            match member {
-                ClassMember::Method(method) => {
-                    let method_name = match &method.key {
-                        PropName::Ident(ident) => ident.sym.to_string(),
-                        PropName::Str(str_lit) => str_lit.value.to_string(),
-                        _ => continue,
-                    };
+            if let ClassMember::Method(method) = member {
+                let method_name = match &method.key {
+                    PropName::Ident(ident) => ident.sym.to_string(),
+                    PropName::Str(str_lit) => str_lit.value.to_string(),
+                    _ => continue,
+                };
 
-                    let method_span = method.span();
-                    let method_doc = self.extract_doc_comment(&method_span);
+                let method_span = method.span();
+                let method_doc = self.extract_doc_comment(&method_span);
 
-                    let params = function_pat_to_param_info(
-                        method.function.params.iter().map(|p| &p.pat),
-                        &self.source_map,
+                let params = function_pat_to_param_info(
+                    method.function.params.iter().map(|p| &p.pat),
+                    &self.source_map,
+                );
+
+                let js_return_type = method.function.return_type.as_ref().map(|type_ann| {
+                    let ty = &type_ann.type_ann;
+                    type_to_string(ty, &self.source_map)
+                });
+
+                let is_async = method.function.is_async;
+                if !is_async
+                    && js_return_type
+                        .as_ref()
+                        .is_some_and(|js_return_type: &String| {
+                            js_return_type.starts_with("Promise")
+                        })
+                {
+                    panic!(
+                        "Function `{}` in class `{}` returns a Promise but is not marked as async",
+                        method_name, name
                     );
-
-                    let js_return_type = method.function.return_type.as_ref().map(|type_ann| {
-                        let ty = &type_ann.type_ann;
-                        type_to_string(ty, &self.source_map)
-                    });
-
-                    let is_async = method.function.is_async;
-                    if !is_async
-                        && js_return_type
-                            .as_ref()
-                            .is_some_and(|js_return_type: &String| {
-                                js_return_type.starts_with("Promise")
-                            })
-                    {
-                        panic!(
-                            "Function `{}` in class `{}` returns a Promise but is not marked as async",
-                            method_name, name
-                        );
-                    }
-
-                    let rust_return_type = ts_type_to_rust_type(js_return_type.as_deref(), false);
-
-                    let pos = self.source_map.lookup_char_pos(method_span.lo);
-                    let line = pos.line - 1;
-                    let column = pos.col.0;
-
-                    methods.push(MethodInfo {
-                        name: method_name,
-                        params,
-                        js_return_type,
-                        rust_return_type,
-                        is_async,
-                        is_static: method.is_static,
-                        doc_comment: method_doc,
-                        line,
-                        column,
-                    });
                 }
-                _ => {}
+
+                let rust_return_type = ts_type_to_rust_type(js_return_type.as_deref(), false);
+
+                let pos = self.source_map.lookup_char_pos(method_span.lo);
+                let line = pos.line - 1;
+                let column = pos.col.0;
+
+                methods.push(MethodInfo {
+                    name: method_name,
+                    params,
+                    js_return_type,
+                    rust_return_type,
+                    is_async,
+                    is_static: method.is_static,
+                    doc_comment: method_doc,
+                    line,
+                    column,
+                });
             }
         }
 
@@ -1127,7 +1111,6 @@ fn generate_class_wrapper(
         let inner_function = generate_invocation(
             Some(FunctionClassContext {
                 class_name: class_info.name.clone(),
-                ident: class_ident.clone(),
                 is_static: method.is_static,
             }),
             &func_info,
@@ -1179,10 +1162,10 @@ fn generate_class_wrapper(
                     return true;
                 }
             }
-            return false;
+            false
         }
 
-        let (invocation, return_type, generic) = if returns_self_type(&func_info, &class_info) {
+        let (invocation, return_type, generic) = if returns_self_type(&func_info, class_info) {
             // Constructs this
             let invocation = if method.is_static {
                 quote! {
@@ -1266,7 +1249,6 @@ fn generate_class_wrapper(
 
 struct FunctionClassContext {
     class_name: String,
-    ident: Ident,
     is_static: bool,
 }
 
@@ -1543,9 +1525,8 @@ fn generate_invocation(
             let mut truncated_bytes = vec![0u8; 10];
             use std::io::Read;
             output_reader.read_exact(&mut truncated_bytes).unwrap();
-            let function_id =
-                base64::engine::general_purpose::STANDARD_NO_PAD.encode(truncated_bytes);
-            function_id
+
+            base64::engine::general_purpose::STANDARD_NO_PAD.encode(truncated_bytes)
         };
         quote! {
             static INVOCATION_NUM: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -1810,7 +1791,7 @@ fn return_type_tokens(
     return_type: &RustType,
     span: Option<proc_macro2::Span>,
 ) -> (proc_macro2::TokenStream, Option<proc_macro2::TokenStream>) {
-    let span = span.unwrap_or_else(|| proc_macro2::Span::call_site());
+    let span = span.unwrap_or_else(proc_macro2::Span::call_site);
     let parsed_type = return_type.to_tokens();
     if return_type.to_string() == DEFAULT_GENERIC_OUTPUT {
         let generic = Ident::new(DEFAULT_GENERIC_OUTPUT, span);
@@ -2129,11 +2110,11 @@ pub fn use_js(input: TokenStream) -> TokenStream {
     let line_number = call_site_span.line();
     let column_number = call_site_span.column();
     let mut unhashed_id = file;
-    unhashed_id.push_str(":");
+    unhashed_id.push(':');
     unhashed_id.push_str(&line_number.to_string());
-    unhashed_id.push_str(":");
+    unhashed_id.push(':');
     unhashed_id.push_str(&column_number.to_string());
-    unhashed_id.push_str(":");
+    unhashed_id.push(':');
     let mut function_id_hasher = blake3::Hasher::new();
     function_id_hasher.update(unhashed_id.as_bytes());
 
@@ -2783,15 +2764,15 @@ mod tests {
         assert_eq!(visitor.classes.len(), 1);
         let class = &visitor.classes[0];
         assert_eq!(class.name, "MyClass");
-        assert_eq!(class.is_exported, true);
+        assert!(class.is_exported);
 
         // Verify methods
         assert_eq!(class.methods.len(), 3);
 
         let greet = &class.methods[0];
         assert_eq!(greet.name, "greet");
-        assert_eq!(greet.is_async, false);
-        assert_eq!(greet.is_static, false);
+        assert!(!greet.is_async);
+        assert!(!greet.is_static);
         assert_eq!(greet.params.len(), 1);
         assert_eq!(greet.params[0].name, "greeting");
         assert_eq!(greet.params[0].rust_type.to_string(), "&str");
@@ -2799,15 +2780,15 @@ mod tests {
 
         let fetch_data = &class.methods[1];
         assert_eq!(fetch_data.name, "fetchData");
-        assert_eq!(fetch_data.is_async, true);
-        assert_eq!(fetch_data.is_static, false);
+        assert!(fetch_data.is_async);
+        assert!(!fetch_data.is_static);
         assert_eq!(fetch_data.params.len(), 1);
         assert_eq!(fetch_data.rust_return_type.to_string(), "String");
 
         let create = &class.methods[2];
         assert_eq!(create.name, "create");
-        assert_eq!(create.is_async, false);
-        assert_eq!(create.is_static, true);
+        assert!(!create.is_async);
+        assert!(create.is_static);
         assert_eq!(create.params.len(), 0);
         // Note: The return type MyClass would be parsed as JsValue or unknown type
     }

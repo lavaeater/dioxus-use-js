@@ -58,9 +58,9 @@ fn App() -> Element {
 
     let throws_example: Resource<Result<JsError, String>> = use_resource(|| async move {
         match throws().await {
-            Ok(_) => return Err("This is unexpected output".to_owned()),
-            Err(err) => return Ok(err),
-        };
+            Ok(_) => Err("This is unexpected output".to_owned()),
+            Err(err) => Ok(err),
+        }
     });
 
     let js_value_example: Resource<Result<f64, JsError>> = use_resource(|| async move {
@@ -106,7 +106,7 @@ fn App() -> Element {
     });
 
     let mut callback2_signal = use_signal(|| "Callback2 not yet called :(".to_owned());
-    let cb2 = use_callback(move |value: ()| async move {
+    let cb2 = use_callback(move |_value: ()| async move {
         callback2_signal
             .write()
             .replace_range(.., "Callback2 called! Sleeping for 3 seconds...");
@@ -122,7 +122,7 @@ fn App() -> Element {
     });
 
     let mut callback3_signal = use_signal(|| "Callback3 not yet called :(".to_owned());
-    let cb3 = use_callback(move |value: f64| async move {
+    let cb3 = use_callback(move |_value: f64| async move {
         callback3_signal
             .write()
             .replace_range(.., "Callback3 called! Sleeping for 3 seconds...");
@@ -138,7 +138,7 @@ fn App() -> Element {
     });
 
     let mut callback4_signal = use_signal(|| "Callback4 not yet called :(".to_owned());
-    let cb4 = use_callback(move |value: ()| async move {
+    let cb4 = use_callback(move |_value: ()| async move {
         callback4_signal
             .write()
             .replace_range(.., "Callback4 called! Sleeping for 3 seconds...");
@@ -169,9 +169,9 @@ fn App() -> Element {
     });
 
     let cb6 = use_callback(|_: ()| async {
-        return Err(serde_json::Value::Number(
+        Err(serde_json::Value::Number(
             serde_json::Number::from_f64(6.0).unwrap(),
-        ));
+        ))
     });
     let callback6_example: Resource<Result<String, JsError>> = use_resource(move || async move {
         let output = callback6(cb6).await?;

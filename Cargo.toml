@@ -6,3 +6,15 @@ members = [
     "dioxus-use-js",
     "example"
 ]
+
+# dx (Dioxus CLI) build profiles for the `example` crate. Cargo requires these
+# to live at the workspace root.
+[profile.wasm-dev]
+inherits = "dev"
+opt-level = 1
+
+[profile.server-dev]
+inherits = "dev"
+
+[profile.android-dev]
+inherits = "dev"

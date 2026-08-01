@@ -34,7 +34,9 @@ impl BunBuild {
                 .unwrap_or(false)
         }
         if self.skip_if_no_bun && !bun_exists() {
-            println!("cargo:warning=Bun does not exist and configuration allows this, skipping bun build.");
+            println!(
+                "cargo:warning=Bun does not exist and configuration allows this, skipping bun build."
+            );
             return;
         }
 
