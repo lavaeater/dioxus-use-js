@@ -16,13 +16,24 @@ Three crates (`Cargo.toml` workspace, `resolver = "3"`, edition 2024, MSRV 1.88)
 
 The root `README.md` is a symlink to `dioxus-use-js/README.md`, which is included as the crate-level doc via `#![doc = include_str!("../README.md")]`. **The README is the canonical spec for type mapping and special-type behavior** — keep it in sync when changing macro codegen.
 
-## Common commands
+## Building, linting, testing
 
-```bash
-cargo build                 # build the workspace
-cargo test                  # run all tests (the macro's unit tests live in dioxus-use-js-macro)
-cargo test -p dioxus-use-js-macro test_primitives   # run a single test
-```
+Run exactly these commands — they match the bacon jobs in `bacon.toml`, so builds share
+artifacts instead of rebuilding each other. A different `-p`/`--features` combination
+compiles a different dependency graph.
+
+| Purpose | Command |
+|---|---|
+| Lint (default check) | `cargo clippy --workspace --all-targets` |
+| Tests (macro unit tests live in `dioxus-use-js-macro`) | `cargo test --workspace` |
+| Single test | `cargo test --workspace test_primitives` |
+
+- Never add `RUSTFLAGS`, `RUSTC_WRAPPER`, `CARGO_PROFILE_*`, `+toolchain` or `-Z` flags to a
+  command. kache (rustc wrapper) and the nightly toolchain come from the user's global
+  config; build settings live in the `Cargo.toml` profiles. One-off overrides invalidate
+  the cache and force rebuilds of everything.
+- No cranelift. Dev profiles favour compile speed.
+- If cargo blocks on the build-directory lock, the user's bacon is building — just wait.
 
 Running the example app (from `example/`):
 

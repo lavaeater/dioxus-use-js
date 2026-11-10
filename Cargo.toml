@@ -11,6 +11,9 @@ members = [
 # to live at the workspace root.
 [profile.wasm-dev]
 inherits = "dev"
+
+# Optimise only dependencies, so our own crates keep fast incremental rebuilds.
+[profile.wasm-dev.package."*"]
 opt-level = 1
 
 [profile.server-dev]
